@@ -1,0 +1,9 @@
+node_modules
+.next
+dist
+.git
+.gitignore
+.env.local
+.DS_Store
+.vscode
+.idea
