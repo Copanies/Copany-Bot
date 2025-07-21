@@ -9,8 +9,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
-    "outDir": "dist"
+    "outDir": "dist",
+    "rootDir": "src",
+    "baseUrl": "."
   },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"],
   "ts-node": {
     "esm": true,
     "experimentalSpecifierResolution": "node"
