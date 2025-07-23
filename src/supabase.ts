@@ -117,3 +117,121 @@ export async function getInstallationById(
     return null;
   }
 }
+
+/**
+ * Delete installation record by installation_id
+ * @param installationId GitHub installation ID
+ */
+export async function deleteInstallation(installationId: string) {
+  try {
+    const { error } = await getSupabase()
+      .from("copany_bot_installation")
+      .delete()
+      .eq("installation_id", installationId);
+
+    if (error) {
+      console.error("[Supabase] Query failed:", error);
+    }
+  } catch (error) {
+    console.error("[Supabase] Error occurred during query:", error);
+  }
+}
+
+/**
+ * Delete repositories from installation record by installation_id
+ * @param installationId GitHub installation ID
+ * @param removedRepositories Array of repository IDs to delete
+ * @returns Updated installation record or null if operation fails
+ */
+export async function removedRepositoriesForInstallation(
+  installationId: string,
+  removedRepositories: string[]
+): Promise<CopanyBotInstallation | null> {
+  const installation = await getInstallationById(installationId);
+
+  if (!installation) {
+    return null;
+  }
+
+  try {
+    const repositoryIds = installation.repository_ids;
+
+    const newRepositoryIds = repositoryIds?.filter(
+      (id) => !removedRepositories?.includes(id)
+    );
+    const { data, error } = await getSupabase()
+      .from("copany_bot_installation")
+      .update({ repository_ids: newRepositoryIds })
+      .eq("installation_id", installationId)
+      .select()
+      .single();
+
+    if (error) {
+      return null;
+    }
+    return data as unknown as CopanyBotInstallation;
+  } catch (error) {
+    console.error(
+      "[Debug] Error details:",
+      error instanceof Error
+        ? {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          }
+        : error
+    );
+    return null;
+  }
+}
+
+/**
+ * Add repositories to installation record by installation_id
+ * @param installationId GitHub installation ID
+ * @param addedRepositories Array of repository IDs to add
+ * @returns Updated installation record or null if operation fails
+ */
+export async function addedRepositoriesForInstallation(
+  installationId: string,
+  addedRepositories: string[]
+): Promise<CopanyBotInstallation | null> {
+  const installation = await getInstallationById(installationId);
+
+  if (!installation) {
+    console.log(`[Debug] Installation ${installationId} not found`);
+    return null;
+  }
+
+  try {
+    const repositoryIds = installation.repository_ids;
+
+    const newRepositoryIds = Array.from(
+      new Set([...(repositoryIds || []), ...addedRepositories])
+    );
+
+    const { data, error } = await getSupabase()
+      .from("copany_bot_installation")
+      .update({ repository_ids: newRepositoryIds })
+      .eq("installation_id", installationId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[Debug] Update failed with error:", error);
+      return null;
+    }
+    return data as unknown as CopanyBotInstallation;
+  } catch (error) {
+    console.error(
+      "[Debug] Error details:",
+      error instanceof Error
+        ? {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          }
+        : error
+    );
+    return null;
+  }
+}

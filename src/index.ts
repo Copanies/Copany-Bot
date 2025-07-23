@@ -1,7 +1,12 @@
 import express from "express";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { saveInstallation } from "./supabase";
+import {
+  saveInstallation,
+  deleteInstallation,
+  addedRepositoriesForInstallation,
+  removedRepositoriesForInstallation,
+} from "./supabase.js";
 
 dotenv.config();
 
@@ -52,13 +57,13 @@ app.post("/github/webhook", async (req, res) => {
   const signature = req.headers["x-hub-signature-256"] as string;
   const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
 
-  console.log("\n=== GitHub Webhook Request Details ===");
+  // console.log("\n=== GitHub Webhook Request Details ===");
 
   // Print request headers
-  console.log("[Request Headers]");
-  Object.entries(req.headers).forEach(([key, value]) => {
-    console.log(`  ${key}: ${value}`);
-  });
+  // console.log("[Request Headers]");
+  // Object.entries(req.headers).forEach(([key, value]) => {
+  //   console.log(`  ${key}: ${value}`);
+  // });
 
   // Verify webhook secret is configured
   if (!webhookSecret) {
@@ -81,60 +86,59 @@ app.post("/github/webhook", async (req, res) => {
   try {
     const jsonPayload = JSON.parse(payload.toString());
 
-    console.log("[Event Type]", req.headers["x-github-event"]);
-    console.log("[Delivery ID]", req.headers["x-github-delivery"]);
-    console.log("[Hook ID]", req.headers["x-github-hook-id"]);
-    console.log(
-      "[Hook Installation Target ID]",
-      req.headers["x-github-hook-installation-target-id"]
-    );
-    console.log(
-      "[Hook Installation Target Type]",
-      req.headers["x-github-hook-installation-target-type"]
-    );
+    // console.log("[Event Type]", req.headers["x-github-event"]);
+    // console.log("[Delivery ID]", req.headers["x-github-delivery"]);
+    // console.log("[Hook ID]", req.headers["x-github-hook-id"]);
+    // console.log(
+    //   "[Hook Installation Target ID]",
+    //   req.headers["x-github-hook-installation-target-id"]
+    // );
+    // console.log(
+    //   "[Hook Installation Target Type]",
+    //   req.headers["x-github-hook-installation-target-type"]
+    // );
 
-    console.log("[Complete Request Body]");
-    console.log(JSON.stringify(jsonPayload, null, 2));
+    // console.log("[Complete Request Body]");
+    // console.log(JSON.stringify(jsonPayload, null, 2));
 
     // Handle different event types
     const eventType = req.headers["x-github-event"];
     switch (eventType) {
       case "push":
-        console.log(`[Push Event] Pushed to ${jsonPayload.ref} branch`);
-        console.log(
-          `[Commit Count] ${jsonPayload.commits?.length || 0} commits`
-        );
+        console.log("push event");
+        // console.log(`[Push Event] Pushed to ${jsonPayload.ref} branch`);
+        // console.log(
+        //   `[Commit Count] ${jsonPayload.commits?.length || 0} commits`
+        // );
         break;
       case "pull_request":
-        console.log(
-          `[PR Event] ${jsonPayload.action} - #${jsonPayload.number}`
-        );
-        console.log(`[PR Title] ${jsonPayload.pull_request?.title}`);
+        console.log("pull_request event");
+        // console.log(
+        //   `[PR Event] ${jsonPayload.action} - #${jsonPayload.number}`
+        // );
+        // console.log(`[PR Title] ${jsonPayload.pull_request?.title}`);
         break;
       case "issues":
-        console.log(
-          `[Issue Event] ${jsonPayload.action} - #${jsonPayload.issue?.number}`
-        );
-        console.log(`[Issue Title] ${jsonPayload.issue?.title}`);
+        console.log("issues event");
+        // console.log(
+        //   `[Issue Event] ${jsonPayload.action} - #${jsonPayload.issue?.number}`
+        // );
+        // console.log(`[Issue Title] ${jsonPayload.issue?.title}`);
         break;
       case "installation":
-        console.log(
-          `[Installation Event] ${jsonPayload.action} - ID: ${jsonPayload.installation?.id}`
-        );
-        console.log(
-          `[Target] ${jsonPayload.installation?.target_type}: ${jsonPayload.installation?.account?.login}`
-        );
+        console.log("installation event");
+        // console.log(
+        //   `[Installation Event] ${jsonPayload.action} - ID: ${jsonPayload.installation?.id}`
+        // );
+        // console.log(
+        //   `[Target] ${jsonPayload.installation?.target_type}: ${jsonPayload.installation?.account?.login}`
+        // );
 
         // If it's an installation creation event, save to database
         if (jsonPayload.action === "created") {
           try {
             const result = await saveInstallation(jsonPayload);
-            if (result.success) {
-              console.log(
-                `[✓] Installation info saved to database:`,
-                result.data
-              );
-            } else {
+            if (!result.success) {
               console.error(
                 `[✗] Failed to save installation info:`,
                 result.error
@@ -143,6 +147,64 @@ app.post("/github/webhook", async (req, res) => {
           } catch (error) {
             console.error(
               `[✗] Error occurred while saving installation info:`,
+              error
+            );
+          }
+        } else if (jsonPayload.action === "deleted") {
+          try {
+            await deleteInstallation(jsonPayload.installation?.id?.toString());
+          } catch (error) {
+            console.error(
+              `[✗] Error occurred while deleting installation:`,
+              error
+            );
+          }
+        }
+        break;
+
+      case "installation_repositories":
+        console.log("installation_repositories event");
+        if (
+          jsonPayload.action === "added" &&
+          jsonPayload.repositories_added?.length > 0
+        ) {
+          console.log("added repositories");
+          try {
+            const addedRepoIds = jsonPayload.repositories_added.map(
+              (repo: any) => repo.id
+            );
+            const result = await addedRepositoriesForInstallation(
+              jsonPayload.installation?.id?.toString(),
+              addedRepoIds
+            );
+            if (!result) {
+              console.error(`[✗] Failed to add repositories`);
+            }
+          } catch (error) {
+            console.error(
+              `[✗] Error occurred while adding repositories:`,
+              error
+            );
+          }
+        } else if (
+          jsonPayload.action === "removed" &&
+          jsonPayload.repositories_removed?.length > 0
+        ) {
+          console.log("removed repositories");
+          try {
+            const removedRepoIds = jsonPayload.repositories_removed.map(
+              (repo: any) => repo.id
+            );
+            const result = await removedRepositoriesForInstallation(
+              jsonPayload.installation?.id?.toString(),
+              removedRepoIds
+            );
+            if (!result) {
+              console.error(`[✗] Failed to remove repositories`);
+            }
+          } catch (error) {
+            console.error(
+              `[✗] Error occurred while removing repositories:`,
               error
             );
           }
@@ -160,9 +222,27 @@ app.post("/github/webhook", async (req, res) => {
   res.status(200).send("Webhook processed successfully");
 });
 
-const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`📡 Webhook endpoint: http://localhost:${port}/github/webhook`);
-  console.log(`🔑 Make sure to set GITHUB_WEBHOOK_SECRET environment variable`);
+const port = Number(process.env.PORT) || 8080;
+
+// Add startup error handling
+const server = app
+  .listen(port, "0.0.0.0", () => {
+    console.log(`🚀 Server running on port ${port}`);
+    console.log(`📡 Webhook endpoint: http://0.0.0.0:${port}/github/webhook`);
+    console.log(
+      `🔑 Make sure to set GITHUB_WEBHOOK_SECRET environment variable`
+    );
+  })
+  .on("error", (err) => {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  });
+
+// Add graceful shutdown
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down...");
+  server.close(() => {
+    console.log("Server closed");
+    process.exit(0);
+  });
 });
