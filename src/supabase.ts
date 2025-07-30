@@ -58,8 +58,8 @@ export async function saveInstallation(
           installationData.installation?.target_type || "organization"
         ),
         target_login: installationData.installation?.account?.login || null,
-        repository_ids: installationData.repositories.map(
-          (repo: any) => repo.id
+        repository_ids: installationData.repositories.map((repo: any) =>
+          repo.id.toString()
         ),
       };
 
@@ -80,13 +80,16 @@ export async function saveInstallation(
       return { success: false, error: error.message };
     }
 
+    // 更新相关的 copany 记录
+    await updateCopanyGithubConnection(installationRecord.repository_ids || []);
+
     console.log("[Supabase] Save successful:", data);
     return { success: true, data: data as unknown as CopanyBotInstallation };
   } catch (error) {
     console.error("[Supabase] Error occurred during save:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 }
@@ -124,16 +127,29 @@ export async function getInstallationById(
  */
 export async function deleteInstallation(installationId: string) {
   try {
+    // 先获取要删除的安装记录，以便更新相关的 copany 记录
+    const installation = await getInstallationById(installationId);
+    if (!installation) {
+      console.error("[Supabase] Installation not found:", installationId);
+      return;
+    }
+
     const { error } = await getSupabase()
       .from("copany_bot_installation")
       .delete()
       .eq("installation_id", installationId);
 
     if (error) {
-      console.error("[Supabase] Query failed:", error);
+      console.error("[Supabase] Delete failed:", error);
+      return;
+    }
+
+    // 更新相关的 copany 记录
+    if (installation.repository_ids) {
+      await updateCopanyGithubConnection(installation.repository_ids);
     }
   } catch (error) {
-    console.error("[Supabase] Error occurred during query:", error);
+    console.error("[Supabase] Error occurred during deletion:", error);
   }
 }
 
@@ -154,10 +170,10 @@ export async function removedRepositoriesForInstallation(
   }
 
   try {
-    const repositoryIds = installation.repository_ids;
+    const repositoryIds = installation.repository_ids || [];
 
-    const newRepositoryIds = repositoryIds?.filter(
-      (id) => !removedRepositories?.includes(id)
+    const newRepositoryIds = repositoryIds.filter(
+      (id) => !removedRepositories.includes(id)
     );
     const { data, error } = await getSupabase()
       .from("copany_bot_installation")
@@ -169,17 +185,15 @@ export async function removedRepositoriesForInstallation(
     if (error) {
       return null;
     }
+
+    // 更新相关的 copany 记录
+    await updateCopanyGithubConnection(removedRepositories);
+
     return data as unknown as CopanyBotInstallation;
   } catch (error) {
     console.error(
       "[Debug] Error details:",
-      error instanceof Error
-        ? {
-            name: error.name,
-            message: error.message,
-            stack: error.stack,
-          }
-        : error
+      error instanceof Error ? error : String(error)
     );
     return null;
   }
@@ -220,18 +234,94 @@ export async function addedRepositoriesForInstallation(
       console.error("[Debug] Update failed with error:", error);
       return null;
     }
+
+    // 更新相关的 copany 记录
+    await updateCopanyGithubConnection(addedRepositories);
+
     return data as unknown as CopanyBotInstallation;
   } catch (error) {
     console.error(
       "[Debug] Error details:",
-      error instanceof Error
-        ? {
-            name: error.name,
-            message: error.message,
-            stack: error.stack,
-          }
-        : error
+      error instanceof Error ? error : String(error)
     );
     return null;
+  }
+}
+
+/**
+ * 更新 copany 表中记录的 GitHub 连接状态
+ * @param repositoryIds 需要检查的仓库 ID 数组
+ */
+async function updateCopanyGithubConnection(repositoryIds: string[]) {
+  try {
+    console.log(
+      `[Debug] updateCopanyGithubConnection called with repositoryIds:`,
+      repositoryIds
+    );
+    // 1. 获取所有受影响的 copany 记录
+    const { data: copanyRecords, error: queryError } = await getSupabase()
+      .from("copany")
+      .select("id, github_repository_id")
+      .in("github_repository_id", repositoryIds);
+
+    if (queryError) {
+      console.error("[Supabase] Failed to query copany records:", queryError);
+      return;
+    }
+
+    console.log(
+      `[Debug] Fetched copany records:`,
+      copanyRecords?.map((r) => ({
+        id: r.id,
+        github_repository_id: r.github_repository_id,
+      }))
+    );
+
+    // 2. 对于每个受影响的 copany，检查是否在任何安装中
+    for (const record of copanyRecords || []) {
+      console.log(
+        `[Debug] Checking installations for copany id=${record.id}, github_repository_id=${record.github_repository_id}`
+      );
+      const { data: installations, error: installationError } =
+        await getSupabase()
+          .from("copany_bot_installation")
+          .select("repository_ids")
+          .contains("repository_ids", [record.github_repository_id]);
+
+      if (installationError) {
+        console.error(
+          "[Supabase] Failed to check installations:",
+          installationError
+        );
+        continue;
+      }
+
+      console.log(
+        `[Debug] Found ${
+          installations?.length || 0
+        } installations for copany id=${record.id}`
+      );
+
+      // 3. 更新 is_connected_github 状态
+      const isConnected = (installations?.length || 0) > 0;
+      const { error: updateError } = await getSupabase()
+        .from("copany")
+        .update({ is_connected_github: isConnected })
+        .eq("id", record.id as string);
+
+      if (updateError) {
+        console.error(
+          "[Supabase] Failed to update copany record:",
+          updateError
+        );
+      } else {
+        console.log(
+          `[Debug] Updated copany id=${record.id} is_connected_github=${isConnected}`
+        );
+      }
+    }
+    console.log("[Debug] updateCopanyGithubConnection finished");
+  } catch (error) {
+    console.error("[Supabase] Error in updateCopanyGithubConnection:", error);
   }
 }
